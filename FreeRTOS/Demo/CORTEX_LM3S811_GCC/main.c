@@ -330,7 +330,7 @@ static void vPrintTask( void *pvParameters )
 
 static void vPushArreglo(int arreglo[], int valor,int tam_arreglo)
 {
-  for(int i=0; i == tam_arreglo-1; i++)
+  for(int i=0; i < tam_arreglo-1; i++)
   {
     arreglo[i] = arreglo[i+1];
   }
@@ -348,8 +348,8 @@ static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo)
 
   for (int i = 0; i < ventana; i++) 
   {
-    promedio += arreglo[(tam_arreglo-1)-ventana];
+    promedio += arreglo[(tam_arreglo-1)-i];
   }
 
-  return promedio;
+  return promedio/ventana;
 }
