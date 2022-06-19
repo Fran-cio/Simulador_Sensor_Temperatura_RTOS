@@ -44,6 +44,7 @@
 
 /* Delay between cycles of the 'check' task. */
 #define CENSADO_DELAY						( ( TickType_t ) 100 / portTICK_PERIOD_MS )
+#define N_MAX 20
 
 /* UART configuration - note this does not use the FIFO so is not very
 efficient. */
@@ -72,6 +73,7 @@ static void prvSetupHardware( void );
  * The 'check' task, as described at the top of this file.
  */
 static void vSensorTemperatura( void *pvParameters );
+static void vGenerarPromedio( void *pvParameters );
 
 /*
  * The task that is woken by the ISR that processes GPIO interrupts originating
@@ -84,18 +86,24 @@ static void vButtonHandlerTask( void *pvParameters );
  */
 static void vPrintTask( void *pvParameter );
 
+static void vPushArreglo(int arreglo[], int valor,int tam_arreglo);
+static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo);
+
 /* String that is transmitted on the UART. */
 static char *cMessage = "Task woken by button interrupt! --- ";
 static volatile char *pcNextChar;
 static unsigned int temperatura_actual = 15;
 static uint32_t _dwRandNext=1 ;
 
+static unsigned int N=15;
+
 /* The semaphore used to wake the button handler task from within the GPIO
 interrupt handler. */
 SemaphoreHandle_t xButtonSemaphore;
 
 /* The queue used to send strings to the print task for display on the LCD. */
-QueueHandle_t xPrintQueue;
+QueueHandle_t xCensadoQueue;
+QueueHandle_t xPromedioQueue;
 
 /*-----------------------------------------------------------*/
 
@@ -117,13 +125,14 @@ int main( void )
 	xSemaphoreTake( xButtonSemaphore, 0 );
 
 	/* Create the queue used to pass message to vPrintTask. */
-	xPrintQueue = xQueueCreate( mainQUEUE_SIZE, 3 );
+	xCensadoQueue = xQueueCreate( mainQUEUE_SIZE, sizeof(int) );
+        xPromedioQueue = xQueueCreate( mainQUEUE_SIZE, sizeof(int) );
 
 	/* Start the standard demo tasks. */
 
 	/* Start the tasks defined within the file. */
-	xTaskCreate( vSensorTemperatura, "Check", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY, NULL );
-	xTaskCreate( vButtonHandlerTask, "Status", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY + 1, NULL );
+	xTaskCreate( vSensorTemperatura, "Sensor", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY + 1, NULL );
+	xTaskCreate( vGenerarPromedio, "Generar promedio", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY , NULL );
 	xTaskCreate( vPrintTask, "Print", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY - 1, NULL );
 
 	/* Start the scheduler. */
@@ -151,9 +160,7 @@ static void vSensorTemperatura( void *pvParameters )
     /* Perform this check every mainCHECK_DELAY milliseconds. */
 
     /* Has an error been found in any task? */
-    int var = (rando());
-
-    if(var%2)
+    if(rando()%2)
     {
       if(temperatura_actual < 30)
       {
@@ -167,12 +174,25 @@ static void vSensorTemperatura( void *pvParameters )
         temperatura_actual--;
       }
     }
-    char temp[3];
-    itoa(temperatura_actual, temp, 10);
-    xQueueSend(xPrintQueue, temp, portMAX_DELAY );
+    xQueueSend(xCensadoQueue, &temperatura_actual, portMAX_DELAY );
 
 
     vTaskDelayUntil( &xLastExecutionTime, CENSADO_DELAY );
+  }
+}
+
+static void vGenerarPromedio(void *pvParameters)
+{
+  int arreglo[N_MAX], valor_censado,promedio;
+  
+  while(1)
+  {
+    xQueueReceive( xCensadoQueue, &valor_censado, portMAX_DELAY);
+
+    vPushArreglo(arreglo,valor_censado,N_MAX);
+    promedio = dCalcularPromedio(arreglo,N,N_MAX);
+
+    xQueueSend(xPromedioQueue, &promedio, portMAX_DELAY );
   }
 }
 /*-----------------------------------------------------------*/
@@ -243,7 +263,7 @@ static void vButtonHandlerTask( void *pvParameters )
     UARTIntEnable(UART0_BASE, UART_INT_TX);
 
     /* Queue a message for the print task to display on the LCD. */
-    xQueueSend( xPrintQueue, &pcInterruptMessage, portMAX_DELAY );
+    xQueueSend( xCensadoQueue, &pcInterruptMessage, portMAX_DELAY );
 
     /* Make sure we don't process bounces. */
     vTaskDelay( mainDEBOUNCE_DELAY );
@@ -295,17 +315,41 @@ void vGPIO_ISR( void )
 
 static void vPrintTask( void *pvParameters )
 {
-  char pcMessage[3];
-  unsigned portBASE_TYPE uxLine = 0, uxRow = 0;
+  int pcMessage;
 
   for( ;; )
   {
     /* Wait for a message to arrive. */
-    xQueueReceive( xPrintQueue, &pcMessage, portMAX_DELAY );
+    xQueueReceive( xCensadoQueue, &pcMessage, portMAX_DELAY );
 
     /* Write the message to the LCD. */
-    OSRAMClear();
-    OSRAMStringDraw( pcMessage, uxLine, uxRow);
+    // OSRAMClear();
+    // OSRAMStringDraw( pcMessage, uxLine, uxRow);
   }
 }
 
+static void vPushArreglo(int arreglo[], int valor,int tam_arreglo)
+{
+  for(int i=0; i == tam_arreglo-1; i++)
+  {
+    arreglo[i] = arreglo[i+1];
+  }
+
+  arreglo[tam_arreglo-1] = valor;
+}
+
+static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo)
+{
+  int promedio=0;
+  if (ventana > tam_arreglo)
+  {
+    while (1) {}
+  }
+
+  for (int i = 0; i < ventana; i++) 
+  {
+    promedio += arreglo[(tam_arreglo-1)-ventana];
+  }
+
+  return promedio;
+}
