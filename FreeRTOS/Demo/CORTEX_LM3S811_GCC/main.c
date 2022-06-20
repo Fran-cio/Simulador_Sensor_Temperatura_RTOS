@@ -45,6 +45,7 @@
 /* Delay between cycles of the 'check' task. */
 #define CENSADO_DELAY						( ( TickType_t ) 100 / portTICK_PERIOD_MS )
 #define N_MAX 20
+#define VALORES_X 94
 
 /* UART configuration - note this does not use the FIFO so is not very
 efficient. */
@@ -74,7 +75,9 @@ static void prvSetupHardware( void );
  */
 static void vSensorTemperatura( void *pvParameters );
 static void vGenerarPromedio( void *pvParameters );
-
+static void vGraficar(void *pvParameters);
+static char* sObtenerCaracter(int valor);
+static int dObtenerFila(int valor);
 /*
  * The task that is woken by the ISR that processes GPIO interrupts originating
  * from the push button.
@@ -95,7 +98,7 @@ static volatile char *pcNextChar;
 static unsigned int temperatura_actual = 15;
 static uint32_t _dwRandNext=1 ;
 
-static unsigned int N=15;
+static unsigned int N=10;
 
 /* The semaphore used to wake the button handler task from within the GPIO
 interrupt handler. */
@@ -121,8 +124,8 @@ int main( void )
 
 	/* Create the semaphore used to wake the button handler task from the GPIO
 	ISR. */
-	vSemaphoreCreateBinary( xButtonSemaphore );
-	xSemaphoreTake( xButtonSemaphore, 0 );
+	// vSemaphoreCreateBinary( xButtonSemaphore );
+	// xSemaphoreTake( xButtonSemaphore, 0 );
 
 	/* Create the queue used to pass message to vPrintTask. */
 	xCensadoQueue = xQueueCreate( mainQUEUE_SIZE, sizeof(int) );
@@ -133,7 +136,7 @@ int main( void )
 	/* Start the tasks defined within the file. */
 	xTaskCreate( vSensorTemperatura, "Sensor", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY + 1, NULL );
 	xTaskCreate( vGenerarPromedio, "Generar promedio", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY , NULL );
-	xTaskCreate( vPrintTask, "Print", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY - 1, NULL );
+	xTaskCreate( vGraficar, "Graf", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY - 1, NULL );
 
 	/* Start the scheduler. */
 	vTaskStartScheduler();
@@ -154,7 +157,18 @@ static void vSensorTemperatura( void *pvParameters )
      works correctly. */
 
   xLastExecutionTime = xTaskGetTickCount();
-  while( 1 )
+
+  UBaseType_t uxHighWaterMark;
+
+  /* Inspect our own high water mark on entering the task. */
+  uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+  if(uxHighWaterMark < 1)
+  {
+    while (1) {
+      
+    }
+  }
+  for (;;)
   {
 
     /* Perform this check every mainCHECK_DELAY milliseconds. */
@@ -176,24 +190,118 @@ static void vSensorTemperatura( void *pvParameters )
     }
     xQueueSend(xCensadoQueue, &temperatura_actual, portMAX_DELAY );
 
+    uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
 
+    if(uxHighWaterMark < 1)
+    {
+      while (1) {
+
+      }
+    }
     vTaskDelayUntil( &xLastExecutionTime, CENSADO_DELAY );
   }
 }
 
 static void vGenerarPromedio(void *pvParameters)
 {
-  int arreglo[N_MAX], valor_censado,promedio;
-  
-  while(1)
+  int arreglo[N_MAX] = {}
+  ,valor_censado
+    ,promedio;
+
+  char N_nuevo[3];
+
+  UBaseType_t uxHighWaterMark;
+
+  /* Inspect our own high water mark on entering the task. */
+  uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+
+  if(uxHighWaterMark <1)
+  {
+    while (1) {
+
+    }
+  }
+  for(;;)
   {
     xQueueReceive( xCensadoQueue, &valor_censado, portMAX_DELAY);
 
+    if(UARTCharsAvail(UART0_BASE))
+    {
+      char caracter;
+      int i=0;
+      int nuevo_N=0;
+      while((caracter =(char)UARTCharNonBlockingGet(UART0_BASE)) != -1)
+      {
+        N_nuevo[i] = caracter;
+        if(i==2) break;
+        i++;
+      }
+      N_nuevo[i] = '\0';
+      nuevo_N = atoi(N_nuevo);
+      if( atoi(N_nuevo) > 1 && atoi(N_nuevo) < 10 )
+      {
+        N = atoi(N_nuevo);
+      }
+    }
     vPushArreglo(arreglo,valor_censado,N_MAX);
     promedio = dCalcularPromedio(arreglo,N,N_MAX);
 
     xQueueSend(xPromedioQueue, &promedio, portMAX_DELAY );
+
+    uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+    if(uxHighWaterMark < 1)
+    {
+      while (1) {
+
+      }
+    }
   }
+}
+void vGraficarEjes(void)
+{
+  OSRAMImageDraw("",0,0,2,1);
+  OSRAMImageDraw("",0,1,2,1);
+  for (int i = 0; i < VALORES_X ; i++)
+  {
+    OSRAMImageDraw("@",i+2,1,2,1);
+  }
+}
+
+static void vGraficar(void *pvParameters)
+{
+  int arreglo[VALORES_X] = {}
+  , promedio;
+  UBaseType_t uxHighWaterMark;
+
+  /* Inspect our own high water mark on entering the task. */
+  uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+  if(uxHighWaterMark <1)
+  {
+    while (1) {
+
+    }
+  }
+  for(;;)
+  {
+    xQueueReceive( xPromedioQueue, &promedio, portMAX_DELAY);
+    vPushArreglo(arreglo,promedio,VALORES_X);
+
+    OSRAMClear();
+    //96 columnas de ancho
+    vGraficarEjes();
+    for (int i = 0; i < VALORES_X; i++)
+    {
+      OSRAMImageDraw(sObtenerCaracter(arreglo[i]),i+2,dObtenerFila(arreglo[i]),1,1);
+    }
+    uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+    if(uxHighWaterMark < 1)
+    {
+      while (1) {
+
+      }
+    }
+  }
+
 }
 /*-----------------------------------------------------------*/
 
@@ -213,66 +321,29 @@ static void prvSetupHardware( void )
   //
   //
   // /* Enable the UART.  */
-  // SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
-  // SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+  SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
   //
   // /* Set GPIO A0 and A1 as peripheral function.  They are used to output the
   // UART signals. */
   // GPIODirModeSet( GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1, GPIO_DIR_MODE_HW );
   //
   // /* Configure the UART for 8-N-1 operation. */
-  // UARTConfigSet( UART0_BASE, mainBAUD_RATE, UART_CONFIG_WLEN_8 | UART_CONFIG_PAR_NONE | UART_CONFIG_STOP_ONE );
+  UARTConfigSet( UART0_BASE, mainBAUD_RATE, UART_CONFIG_WLEN_8 | UART_CONFIG_PAR_NONE | UART_CONFIG_STOP_ONE );
   //
   // /* We don't want to use the fifo.  This is for test purposes to generate
   // as many interrupts as possible. */
-  // HWREG( UART0_BASE + UART_O_LCR_H ) &= ~mainFIFO_SET;
+  HWREG( UART0_BASE + UART_O_LCR_H ) &= ~mainFIFO_SET;
   //
   // /* Enable Tx interrupts. */
-  // HWREG( UART0_BASE + UART_O_IM ) |= UART_INT_TX;
-  // IntPrioritySet( INT_UART0, configKERNEL_INTERRUPT_PRIORITY );
-  // IntEnable( INT_UART0 );
+  HWREG( UART0_BASE + UART_O_IM ) |= UART_INT_TX;
+  IntPrioritySet( INT_UART0, configKERNEL_INTERRUPT_PRIORITY );
+  IntEnable( INT_UART0 );
   //
 
   /* Initialise the LCD> */
   OSRAMInit( false );
 }
 /*-----------------------------------------------------------*/
-
-static void vButtonHandlerTask( void *pvParameters )
-{
-  const char *pcInterruptMessage = "Int";
-
-  for( ;; )
-  {
-    /* Wait for a GPIO interrupt to wake this task. */
-    while( xSemaphoreTake( xButtonSemaphore, portMAX_DELAY ) != pdPASS );
-
-    /* Start the Tx of the message on the UART. */
-    UARTIntDisable( UART0_BASE, UART_INT_TX );
-    {
-      pcNextChar = cMessage;
-
-      /* Send the first character. */
-      if( !( HWREG( UART0_BASE + UART_O_FR ) & UART_FR_TXFF ) )
-      {
-        HWREG( UART0_BASE + UART_O_DR ) = *pcNextChar;
-      }
-
-      pcNextChar++;
-    }
-    UARTIntEnable(UART0_BASE, UART_INT_TX);
-
-    /* Queue a message for the print task to display on the LCD. */
-    xQueueSend( xCensadoQueue, &pcInterruptMessage, portMAX_DELAY );
-
-    /* Make sure we don't process bounces. */
-    vTaskDelay( mainDEBOUNCE_DELAY );
-    xSemaphoreTake( xButtonSemaphore, mainNO_DELAY );
-  }
-}
-
-/*-----------------------------------------------------------*/
-
 void vUART_ISR(void)
 {
   unsigned long ulStatus;
@@ -352,4 +423,46 @@ static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo)
   }
 
   return promedio/ventana;
+}
+
+static char* sObtenerCaracter(int valor)
+{
+  if((valor >= 0 && valor < 2) || (valor > 16 && valor <18))
+  {
+    return "@";
+  }
+  else if((valor > 2 && valor < 4) || (valor > 18 && valor <20))
+  {
+    return " ";
+  }
+  else if((valor > 6 && valor < 8) || (valor > 20 && valor <22))
+  {
+    return "";
+  }
+  else if((valor > 8 && valor < 10) || (valor > 22 && valor <24))
+  {
+    return "";
+  }
+  else if((valor > 10 && valor < 12) || (valor > 24 && valor <26))
+  {
+    return "";
+  }
+  else if((valor > 12 && valor < 14) || (valor > 26 && valor <28))
+  {
+    return "";
+  }
+  else if((valor > 14 && valor < 16) || (valor > 28 && valor <=30))
+  {
+    return "";
+  }
+}
+
+static int dObtenerFila(int valor)
+{
+  if(valor < 16)
+  {
+    return 1;
+  }
+
+  return 0;
 }
