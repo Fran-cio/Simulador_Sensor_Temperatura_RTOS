@@ -27,11 +27,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 /* Environment includes. */
 #include "DriverLib.h"
 
 /* Scheduler includes. */
 #include "FreeRTOS.h"
+#include "hw_include/hw_memmap.h"
+#include "hw_include/hw_timer.h"
+#include "hw_include/timer.h"
 #include "task.h"
 #include "queue.h"
 #include "semphr.h"
@@ -44,8 +48,12 @@
 
 /* Delay between cycles of the 'check' task. */
 #define CENSADO_DELAY						( ( TickType_t ) 100 / portTICK_PERIOD_MS )
+#define TOP_DELAY						( ( TickType_t ) 1000 / portTICK_PERIOD_MS )
 #define N_MAX 20
-#define VALORES_X 94
+#define VALORES_X 85
+#define TEMP_MAX 30
+#define TEMP_MIN 0
+#define RANGO_TEMP (TEMP_MAX-TEMP_MIN)
 
 /* UART configuration - note this does not use the FIFO so is not very
 efficient. */
@@ -78,6 +86,10 @@ static void vGenerarPromedio( void *pvParameters );
 static void vGraficar(void *pvParameters);
 static char* sObtenerCaracter(int valor);
 static int dObtenerFila(int valor);
+static void vTop(void *pvParameter);
+void vTaskGetRunTimeStatus(void);
+
+TaskStatus_t *pxTaskStatusArray;
 /*
  * The task that is woken by the ISR that processes GPIO interrupts originating
  * from the push button.
@@ -93,12 +105,12 @@ static void vPushArreglo(int arreglo[], int valor,int tam_arreglo);
 static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo);
 
 /* String that is transmitted on the UART. */
-static char *cMessage = "Task woken by button interrupt! --- ";
 static volatile char *pcNextChar;
 static unsigned int temperatura_actual = 15;
 static uint32_t _dwRandNext=1 ;
 
 static unsigned int N=10;
+unsigned long runtime_contador = 0;
 
 /* The semaphore used to wake the button handler task from within the GPIO
 interrupt handler. */
@@ -135,8 +147,9 @@ int main( void )
 
 	/* Start the tasks defined within the file. */
 	xTaskCreate( vSensorTemperatura, "Sensor", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY + 1, NULL );
-	xTaskCreate( vGenerarPromedio, "Generar promedio", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY , NULL );
-	xTaskCreate( vGraficar, "Graf", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY - 1, NULL );
+	xTaskCreate( vGenerarPromedio, "Media", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY , NULL );
+	xTaskCreate( vGraficar, "Grafico", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY - 1, NULL );
+        xTaskCreate( vTop, "Top", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY + 1, NULL );
 
 	/* Start the scheduler. */
 	vTaskStartScheduler();
@@ -259,12 +272,16 @@ static void vGenerarPromedio(void *pvParameters)
 }
 void vGraficarEjes(void)
 {
-  OSRAMImageDraw("",0,0,2,1);
-  OSRAMImageDraw("",0,1,2,1);
-  for (int i = 0; i < VALORES_X ; i++)
+  OSRAMImageDraw("",9,0,2,1); //eje Y
+  OSRAMImageDraw("",9,1,2,1);
+  for (int i = 0; i < VALORES_X ; i++)//eje x
   {
-    OSRAMImageDraw("@",i+2,1,2,1);
+    OSRAMImageDraw("@",i+11,1,2,1);
   }
+  OSRAMImageDraw("",0,0,3,1); //Numero 3
+  OSRAMImageDraw("",4,0,4,1);//Numero 0
+  OSRAMImageDraw("8DD8",4,1,4,1);//Numero 0 inferior
+
 }
 
 static void vGraficar(void *pvParameters)
@@ -276,11 +293,8 @@ static void vGraficar(void *pvParameters)
   /* Inspect our own high water mark on entering the task. */
   uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
   if(uxHighWaterMark <1)
-  {
-    while (1) {
+    while (1) {}
 
-    }
-  }
   for(;;)
   {
     xQueueReceive( xPromedioQueue, &promedio, portMAX_DELAY);
@@ -291,18 +305,52 @@ static void vGraficar(void *pvParameters)
     vGraficarEjes();
     for (int i = 0; i < VALORES_X; i++)
     {
-      OSRAMImageDraw(sObtenerCaracter(arreglo[i]),i+2,dObtenerFila(arreglo[i]),1,1);
+      OSRAMImageDraw(sObtenerCaracter(arreglo[i]),i+11,dObtenerFila(arreglo[i]),1,1);
     }
     uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
     if(uxHighWaterMark < 1)
-    {
-      while (1) {
+      while (1) { }
 
-      }
-    }
   }
-
 }
+
+static void vTop(void *pvParameter)
+{
+  UBaseType_t uxHighWaterMark;
+  volatile UBaseType_t uxArraySize, x;
+
+  uxArraySize = uxTaskGetNumberOfTasks();
+  pxTaskStatusArray = pvPortMalloc( uxArraySize * sizeof( TaskStatus_t ) );
+  /* Inspect our own high water mark on entering the task. */
+  uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+  if(uxHighWaterMark < 1)
+    while (1) {}
+
+  for(;;)
+  {
+    vTaskGetRunTimeStatus();
+    
+    uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
+
+    if(uxHighWaterMark < 1)
+      while (1) {}
+
+    vTaskDelay(TOP_DELAY);
+  }
+  
+}
+
+void vMandarStringUART(char *mensaje)
+{
+  while(*mensaje != NULL)
+    {
+      UARTCharPut(UART0_BASE,*mensaje);
+      mensaje++;
+    }
+  UARTCharPut(UART0_BASE,'\0');
+  return;
+}
+
 /*-----------------------------------------------------------*/
 
 static void prvSetupHardware( void )
@@ -384,21 +432,6 @@ void vGPIO_ISR( void )
 }
 /*-----------------------------------------------------------*/
 
-static void vPrintTask( void *pvParameters )
-{
-  int pcMessage;
-
-  for( ;; )
-  {
-    /* Wait for a message to arrive. */
-    xQueueReceive( xCensadoQueue, &pcMessage, portMAX_DELAY );
-
-    /* Write the message to the LCD. */
-    // OSRAMClear();
-    // OSRAMStringDraw( pcMessage, uxLine, uxRow);
-  }
-}
-
 static void vPushArreglo(int arreglo[], int valor,int tam_arreglo)
 {
   for(int i=0; i < tam_arreglo-1; i++)
@@ -427,42 +460,136 @@ static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo)
 
 static char* sObtenerCaracter(int valor)
 {
-  if((valor >= 0 && valor < 2) || (valor > 16 && valor <18))
-  {
+  if(valor < 2)
     return "@";
-  }
-  else if((valor > 2 && valor < 4) || (valor > 18 && valor <20))
-  {
+  else if(valor < 4)
+    return "`";
+  else if( valor < 8)
+    return "P";
+  else if( valor < 10)
+    return "H";
+  else if(valor < 12)
+    return "D";
+  else if(valor < 14)
+    return "B";
+  else if( valor < 16)
+    return "A";
+  else if(valor <18)
+    return "@";
+  else if(valor <20)
     return " ";
-  }
-  else if((valor > 6 && valor < 8) || (valor > 20 && valor <22))
-  {
+  else if(valor <22)
     return "";
-  }
-  else if((valor > 8 && valor < 10) || (valor > 22 && valor <24))
-  {
+  else if(valor <24)
     return "";
-  }
-  else if((valor > 10 && valor < 12) || (valor > 24 && valor <26))
-  {
+  else if (valor <26)
     return "";
-  }
-  else if((valor > 12 && valor < 14) || (valor > 26 && valor <28))
-  {
+  else if(valor <28)
     return "";
-  }
-  else if((valor > 14 && valor < 16) || (valor > 28 && valor <=30))
-  {
+  else if(valor <=30)
     return "";
-  }
 }
 
 static int dObtenerFila(int valor)
 {
-  if(valor < 16)
-  {
-    return 1;
-  }
+  if(valor > 16)
+    return 0;
 
-  return 0;
+  return 1;
+}
+
+void vTaskGetRunTimeStatus( void )
+{
+volatile UBaseType_t uxArraySize, x;
+unsigned long ulTotalRunTime, ulStatsAsPercentage;
+
+   /* Make sure the write buffer does not contain a string. */
+
+   /* Take a snapshot of the number of tasks in case it changes while this
+   function is executing. */
+   /* Allocate a TaskStatus_t structure for each task.  An array could be
+   allocated statically at compile time. */
+
+   if( pxTaskStatusArray != NULL )
+   {
+      /* Generate raw status information about each task. */
+      uxArraySize = uxTaskGetSystemState( pxTaskStatusArray,
+                                 uxArraySize,
+                                 &ulTotalRunTime );
+
+      /* For percentage calculations. */
+      ulTotalRunTime /= 100UL;
+
+      /* Avoid divide by zero errors. */
+      vMandarStringUART("\r");
+      if( ulTotalRunTime > 0 )
+      {
+         /* For each populated position in the pxTaskStatusArray array,
+         format the raw data as human readable ASCII data. */
+          vMandarStringUART("TAREA\t|TICKS\t|CPU%\t|STACK FREE\r\n");
+         for( x = 0; x < uxArraySize; x++ )
+         {
+            /* What percentage of the total run time has the task used?
+            This will always be rounded down to the nearest integer.
+            ulTotalRunTimeDiv100 has already been divided by 100. */
+            ulStatsAsPercentage = 
+                  pxTaskStatusArray[ x ].ulRunTimeCounter / ulTotalRunTime;
+
+              char counter[8],porcentaje[8],stack[8];
+              vMandarStringUART(pxTaskStatusArray[ x ].pcTaskName);
+              vMandarStringUART("\t|");
+              utoa(pxTaskStatusArray[ x ].ulRunTimeCounter,counter,10);
+              vMandarStringUART(counter);
+              vMandarStringUART("\t|");
+              // vMandarStringUART(" Porcentaje: ");
+
+            if( ulStatsAsPercentage > 0UL )
+            {
+              utoa(ulStatsAsPercentage,porcentaje,10);
+              vMandarStringUART(porcentaje);
+            //    sprintf( pcWriteBuffer, "%stt%lutt%lu%%rn",           
+            //                      pxTaskStatusArray[ x ].pcTaskName,
+            //                      pxTaskStatusArray[ x ].ulRunTimeCounter,
+            //                      ulStatsAsPercentage );
+            }
+            else
+            {
+              vMandarStringUART("0");
+            //    sprintf( pcWriteBuffer, "%stt%lutt<1%%rn",
+            //                      pxTaskStatusArray[ x ].pcTaskName,
+            //                      pxTaskStatusArray[ x ].ulRunTimeCounter );
+            }
+            vMandarStringUART("%\t|");
+            // vMandarStringUART("Uso de Stack: ");
+            utoa(pxTaskStatusArray[ x ].usStackHighWaterMark,stack,10);
+            vMandarStringUART(stack);
+            vMandarStringUART(" Words\r\n");
+         }
+         vMandarStringUART("\r\n\r\n\r\n\r\n\r\n\r\n");
+      }
+   }
+}
+void Timer0IntHandler(void)
+{
+    // Clear the timer interrupt.
+    TimerIntClear(TIMER0_BASE, TIMER_TIMA_TIMEOUT);
+    runtime_contador++;
+}
+void configureTimer(void)
+{
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER0);
+    IntMasterEnable();
+    TimerIntEnable(TIMER0_BASE, TIMER_TIMA_TIMEOUT);
+    TimerConfigure(TIMER0_BASE,TIMER_CFG_32_BIT_TIMER);
+//    TimerLoadSet(TIMER0_BASE, TIMER_A, (configCPU_CLOCK_HZ / 10000UL ) - 1UL);
+    TimerLoadSet(TIMER0_BASE, TIMER_A, 1500);
+    TimerIntRegister(TIMER0_BASE,TIMER_A,Timer0IntHandler);
+    TimerEnable(TIMER0_BASE,TIMER_A);
+}
+
+unsigned long get_value(void)
+{
+//    return TimerValueGet(TIMER0_BASE,TIMER_A);
+//    return SysTickValueGet();
+    return  runtime_contador;
 }
