@@ -266,9 +266,7 @@ static void prvIniciarHardware( void )
 static void vPushArreglo(int arreglo[], int valor,int tam_arreglo)
 {
   for(int i=0; i < tam_arreglo-1; i++)
-  {
     arreglo[i] = arreglo[i+1];
-  }
 
   arreglo[tam_arreglo-1] = valor;
 }
@@ -279,14 +277,10 @@ static int dCalcularPromedio(int arreglo[],int ventana,int tam_arreglo)
 {
   int promedio=0;
   if (ventana > tam_arreglo)
-  {
     while (1) {}
-  }
 
   for (int i = 0; i < ventana; i++) 
-  {
     promedio += arreglo[(tam_arreglo-1)-i];
-  }
 
   return promedio/ventana;
 }
