@@ -128,9 +128,7 @@ int dObtenerN(unsigned short int N)
     N_nuevo[i] = '\0';
     nuevo_N = atoi(N_nuevo);
     if( atoi(N_nuevo) > 1 && atoi(N_nuevo) < 10 )
-    {
       N = atoi(N_nuevo);
-    }
   }
   return N;
 }

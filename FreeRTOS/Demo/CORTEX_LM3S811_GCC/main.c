@@ -43,7 +43,9 @@
 #define TOP_DELAY		( ( TickType_t ) 1000 / portTICK_PERIOD_MS )
 #define N_MAX                   20
 #define VALORES_X               85
-
+#define TEMP_MAX                30
+#define TEMP_MIN                0
+ 
 /* UART configuracion. */
 #define mainBAUD_RATE		( 19200 )
 
@@ -132,12 +134,12 @@ static void vSensorTemperatura( void *pvParameters )
     /* Se genera una decision binaria para aumentar o disminuir */
     if(ulRandom()%2)
     {
-      if(temperatura_actual < 30)
+      if(temperatura_actual < TEMP_MAX)
         temperatura_actual++;
     }
     else
     {
-      if(temperatura_actual > 0)
+      if(temperatura_actual > TEMP_MIN)
         temperatura_actual--;
     }
     
@@ -350,9 +352,7 @@ int dObtenerN(unsigned short int N)
     N_nuevo[i] = '\0';
     nuevo_N = atoi(N_nuevo);
     if( atoi(N_nuevo) > 1 && atoi(N_nuevo) < 10 )
-    {
       N = atoi(N_nuevo);
-    }
   }
   return N;
 }
